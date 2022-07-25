@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 DOCKER_PULL_SUCCEEDED = "Downloaded newer image for {}"
 DOCKER_IMAGE_UP_TO_DATE = "Image is up to date for {}"
-IMAGE = "mcr.microsoft.com/mcr/hello-world:latest"
+IMAGE = "mcr.microsoft{}/mcr/hello-world:latest"
 FAQ_MESSAGE = "\nPlease refer to https://aka.ms/acr/health-check for more information."
 ERROR_MSG_DEEP_LINK = "\nPlease refer to https://aka.ms/acr/errors#{} for more information."
 MIN_HELM_VERSION = "2.11.0"
@@ -27,11 +27,33 @@ RECOMMENDED_NOTARY_VERSION = "0.6.0"
 NOTARY_VERSION_REGEX = re.compile(r'Version:\s+([.\d]+)')
 DOCKER_PULL_WRONG_PLATFORM = 'cannot be used on this platform'
 
-
 # Utilities functions
 def print_pass(message):
     logger.warning("%s : OK", str(message))
 
+def _get_image_url(cmd, registry_name, ignore_errors):
+    global IMAGE
+    try:
+        registry, _ = get_registry_by_name(cmd.cli_ctx, registry_name)
+        login_server = registry.login_server.rstrip('/')
+    except CLIError:
+        from ._docker_utils import get_login_server_suffix
+        suffix = get_login_server_suffix(cmd.cli_ctx)
+
+        if not suffix:
+            from ._errors import LOGIN_SERVER_ERROR
+            _handle_error(LOGIN_SERVER_ERROR.format_error_message(registry_name), ignore_errors)
+            return
+
+        login_server = registry_name + suffix
+
+    if login_server.__contains__(".microsoft."):
+        extension = re.findall('(?<=microsoft).*$',login_server)  
+    elif login_server.__contains__("test"):
+        extension = ".com"
+    else:
+        extension = re.findall('(?<=azurecr).*$',login_server) 
+    IMAGE = IMAGE.format(extension)
 
 def _handle_error(error, ignore_errors):
     if ignore_errors:
@@ -410,6 +432,7 @@ def acr_check_health(cmd,  # pylint: disable useless-return
                      ignore_errors=False,
                      yes=False,
                      registry_name=None):
+    _get_image_url(cmd, registry_name, ignore_errors)
     from azure.cli.core.util import in_cloud_console
     in_cloud_console = in_cloud_console()
     if in_cloud_console:
@@ -428,3 +451,4 @@ def acr_check_health(cmd,  # pylint: disable useless-return
         _get_notary_version(ignore_errors)
 
     logger.warning(FAQ_MESSAGE)
+    logger.warning("HELLO")
