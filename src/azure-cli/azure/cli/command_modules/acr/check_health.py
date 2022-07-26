@@ -17,7 +17,6 @@ logger = get_logger(__name__)
 
 DOCKER_PULL_SUCCEEDED = "Downloaded newer image for {}"
 DOCKER_IMAGE_UP_TO_DATE = "Image is up to date for {}"
-IMAGE = "mcr.microsoft{}/mcr/hello-world:latest"
 FAQ_MESSAGE = "\nPlease refer to https://aka.ms/acr/health-check for more information."
 ERROR_MSG_DEEP_LINK = "\nPlease refer to https://aka.ms/acr/errors#{} for more information."
 MIN_HELM_VERSION = "2.11.0"
@@ -32,9 +31,8 @@ def print_pass(message):
     logger.warning("%s : OK", str(message))
 
 def _get_image_url(cmd, registry_name, ignore_errors):
-    global IMAGE
     try:
-        registry, _ = get_registry_by_name(cmd.cli_ctx, registry_name)
+        registry = get_registry_by_name(cmd.cli_ctx, registry_name)
         login_server = registry.login_server.rstrip('/')
     except CLIError:
         from ._docker_utils import get_login_server_suffix
@@ -47,13 +45,16 @@ def _get_image_url(cmd, registry_name, ignore_errors):
 
         login_server = registry_name + suffix
 
-    if login_server.__contains__(".microsoft."):
-        extension = re.findall('(?<=microsoft).*$',login_server)  
-    elif login_server.__contains__("test"):
-        extension = ".com"
+    image = "mcr.microsoft.{}/mcr/hello-world:latest"
+    tokens = login_server.split('.')
+
+    if len(tokens) == 4:
+        return image.format(tokens[-1]) 
+    elif len(tokens) == 5:
+        return image.format(tokens[2:].join('.'))
     else:
-        extension = re.findall('(?<=azurecr).*$',login_server) 
-    IMAGE = IMAGE.format(extension)
+        return image.format("com")
+
 
 def _handle_error(error, ignore_errors):
     if ignore_errors:
@@ -90,7 +91,7 @@ def _subprocess_communicate(command_parts, shell=False):
 
 # Checks for the environment
 # Checks docker command, docker daemon, docker version and docker pull
-def _get_docker_status_and_version(ignore_errors, yes):
+def _get_docker_status_and_version(ignore_errors, yes, image):
     from ._errors import DOCKER_DAEMON_ERROR, DOCKER_PULL_ERROR, DOCKER_VERSION_ERROR
 
     # Docker command and docker daemon check
@@ -121,25 +122,25 @@ def _get_docker_status_and_version(ignore_errors, yes):
     if docker_daemon_available:
         if not yes:
             from knack.prompting import prompt_y_n
-            confirmation = prompt_y_n("This will pull the image {}. Proceed?".format(IMAGE))
+            confirmation = prompt_y_n("This will pull the image {}. Proceed?".format(image))
             if not confirmation:
                 logger.warning("Skipping pull check.")
                 return
 
-        output, warning, stderr = _subprocess_communicate([docker_command, "pull", IMAGE])
+        output, warning, stderr = _subprocess_communicate([docker_command, "pull", image])
 
         if stderr:
             if DOCKER_PULL_WRONG_PLATFORM in stderr:
-                print_pass("Docker pull of '{}'".format(IMAGE))
-                logger.warning("Image '%s' can be pulled but cannot be used on this platform", IMAGE)
+                print_pass("Docker pull of '{}'".format(image))
+                logger.warning("Image '%s' can be pulled but cannot be used on this platform", image)
             else:
                 _handle_error(DOCKER_PULL_ERROR.append_error_message(stderr), ignore_errors)
         else:
             if warning:
                 logger.warning(warning)
-            if output.find(DOCKER_PULL_SUCCEEDED.format(IMAGE)) != -1 or \
-               output.find(DOCKER_IMAGE_UP_TO_DATE.format(IMAGE)) != -1:
-                print_pass("Docker pull of '{}'".format(IMAGE))
+            if output.find(DOCKER_PULL_SUCCEEDED.format(image)) != -1 or \
+               output.find(DOCKER_IMAGE_UP_TO_DATE.format(image)) != -1:
+                print_pass("Docker pull of '{}'".format(image))
             else:
                 _handle_error(DOCKER_PULL_ERROR, ignore_errors)
 
@@ -432,13 +433,13 @@ def acr_check_health(cmd,  # pylint: disable useless-return
                      ignore_errors=False,
                      yes=False,
                      registry_name=None):
-    _get_image_url(cmd, registry_name, ignore_errors)
     from azure.cli.core.util import in_cloud_console
     in_cloud_console = in_cloud_console()
     if in_cloud_console:
         logger.warning("Environment checks are not supported in Azure Cloud Shell.")
     else:
-        _get_docker_status_and_version(ignore_errors, yes)
+        image = _get_image_url(cmd, registry_name, ignore_errors)
+        _get_docker_status_and_version(ignore_errors, yes, image)
         _get_cli_version()
 
     _check_registry_health(cmd, registry_name, ignore_errors)
@@ -451,4 +452,3 @@ def acr_check_health(cmd,  # pylint: disable useless-return
         _get_notary_version(ignore_errors)
 
     logger.warning(FAQ_MESSAGE)
-    logger.warning("HELLO")
